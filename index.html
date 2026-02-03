@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZenType</title>
+    <style>
+        :root {
+            --bg: #111;
+            --text: #555;
+            --highlight: #eee;
+            --cursor: #00ff88;
+            --correct: #eee;
+            --error: #ff5555;
+            --ui: #333;
+        }
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+        }
+        #game {
+            max-width: 800px;
+            width: 90%;
+            position: relative;
+        }
+        #words {
+            font-size: 1.5rem;
+            line-height: 2;
+            user-select: none;
+            position: relative;
+        }
+        .word {
+            margin-right: 10px;
+            display: inline-block;
+        }
+        .letter {
+            position: relative;
+            transition: color 0.1s;
+        }
+        .letter.correct { color: var(--correct); }
+        .letter.incorrect { color: var(--error); text-decoration: underline; }
+        .letter.current { border-left: 2px solid var(--cursor); animation: blink 1s infinite; }
+        .letter.current.right { border-left: none; border-right: 2px solid var(--cursor); }
+        
+        @keyframes blink { 50% { border-color: transparent; } }
+
+        #ui {
+            margin-top: 2rem;
+            display: flex;
+            gap: 2rem;
+            font-size: 1rem;
+            color: var(--ui);
+        }
+        .stat span {
+            color: var(--highlight);
+            font-weight: bold;
+        }
+        #restart-hint {
+            margin-top: 3rem;
+            font-size: 0.8rem;
+            opacity: 0.5;
+        }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+
+<div id="game">
+    <div id="words"></div>
+</div>
+
+<div id="ui">
+    <div class="stat">WPM: <span id="wpm">0</span></div>
+    <div class="stat">Acc: <span id="acc">100%</span></div>
+    <div class="stat">Time: <span id="time">30</span></div>
+</div>
+
+<div id="restart-hint">Press <b>Tab</b> (or tap here) to restart</div>
+
+<!-- Hidden input for mobile keyboard support -->
+<input type="text" id="mobile-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" style="opacity: 0; position: absolute; z-index: -1;">
+
+<script>
+    const quotes = [
+        "The only way to do great work is to love what you do.",
+        "Talk is cheap. Show me the code.",
+        "Programs must be written for people to read, and only incidentally for machines to execute.",
+        "Simplicity is the soul of efficiency.",
+        "Code is like humor. When you have to explain it, it’s bad.",
+        "Fix the cause, not the symptom.",
+        "Optimism is an occupational hazard of programming: feedback is the treatment.",
+        "Simplicity is prerequisite for reliability.",
+        "Before software can be reusable it first has to be usable.",
+        "Make it work, make it right, make it fast."
+    ];
+
+    const wordsDiv = document.getElementById('words');
+    const wpmEl = document.getElementById('wpm');
+    const accEl = document.getElementById('acc');
+    const timeEl = document.getElementById('time');
+    const mobileInput = document.getElementById('mobile-input');
+
+    let currentQuote = [];
+    let startTime = null;
+    let timer = null;
+    let timeLeft = 30;
+    let charIndex = 0;
+    let errors = 0;
+    let isPlaying = false;
+    let totalTyped = 0;
+
+    function init() {
+        // Reset state
+        const text = quotes[Math.floor(Math.random() * quotes.length)];
+        currentQuote = text.split('');
+        charIndex = 0;
+        errors = 0;
+        totalTyped = 0;
+        timeLeft = 30;
+        isPlaying = false;
+        startTime = null;
+        clearInterval(timer);
+
+        // Render
+        wordsDiv.innerHTML = '';
+        currentQuote.forEach(char => {
+            const span = document.createElement('span');
+            span.textContent = char;
+            span.className = 'letter';
+            wordsDiv.appendChild(span);
+        });
+        wordsDiv.children[0].classList.add('current');
+
+        // UI
+        wpmEl.textContent = '0';
+        accEl.textContent = '100%';
+        timeEl.textContent = '30';
+        document.body.style.background = '#111';
+        
+        // Ensure input is focused for typing
+        mobileInput.value = '';
+        mobileInput.focus();
+    }
+
+    // Focus hidden input on any click
+    document.addEventListener('click', () => {
+        mobileInput.focus();
+    });
+
+    function startTimer() {
+        if (isPlaying) return;
+        isPlaying = true;
+        startTime = Date.now();
+        timer = setInterval(() => {
+            timeLeft--;
+            timeEl.textContent = timeLeft;
+            if (timeLeft <= 0) gameOver();
+        }, 1000);
+    }
+
+    function gameOver() {
+        clearInterval(timer);
+        isPlaying = false;
+        document.body.style.background = '#0d1a12'; // Subtle green tint
+        mobileInput.blur();
+    }
+
+    // Handle mobile input
+    mobileInput.addEventListener('input', (e) => {
+        if (!isPlaying && timeLeft <= 0) return;
+        
+        const val = e.target.value;
+        const inputChar = val.slice(-1); // Get last char
+        
+        // Reset input to avoid overflow, but keep one char to allow backspace detection if needed (complex)
+        // Simpler: just clear it and process the char.
+        // But for backspace on mobile, input event isn't always enough.
+        // Let's rely on the global keydown for backspace if possible, or simple input.
+        
+        if (e.inputType === 'deleteContentBackward') {
+            handleBackspace();
+        } else if (inputChar) {
+            handleInput(inputChar);
+        }
+    });
+
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            init();
+            return;
+        }
+        
+        // Let the input event handle text, but we still need backspace/control keys here
+        // or just map everything here if desktop. 
+        // Mobile keyboards sometimes send 'Unidentified' keys.
+        
+        if (e.key === 'Backspace') {
+            handleBackspace();
+            return;
+        }
+
+        if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            // On mobile, let the input event handle it to avoid duplicates
+            // We check active element.
+            if (document.activeElement !== mobileInput) {
+                handleInput(e.key);
+            }
+        }
+    });
+
+    function handleBackspace() {
+        const letters = document.querySelectorAll('.letter');
+        const currentLetter = letters[charIndex];
+        if (charIndex > 0) {
+            currentLetter.className = 'letter';
+            charIndex--;
+            letters[charIndex].className = 'letter current';
+        }
+    }
+
+    function handleInput(key) {
+        if (!isPlaying && timeLeft > 0) startTimer();
+        if (!isPlaying && timeLeft <= 0) return;
+        if (charIndex >= currentQuote.length) return;
+
+        const letters = document.querySelectorAll('.letter');
+        const currentLetter = letters[charIndex];
+        
+        totalTyped++;
+        
+        if (key === currentQuote[charIndex]) {
+            currentLetter.className = 'letter correct';
+        } else {
+            currentLetter.className = 'letter incorrect';
+            errors++;
+        }
+
+        charIndex++;
+        if (charIndex < currentQuote.length) {
+            letters[charIndex].className = 'letter current';
+        } else {
+            gameOver();
+        }
+
+        // Stats
+        const timeElapsed = (30 - timeLeft) || 1; 
+        const wpm = Math.round(((charIndex / 5) / (timeElapsed / 60)));
+        const acc = Math.round(((totalTyped - errors) / totalTyped) * 100);
+        
+        wpmEl.textContent = wpm;
+        accEl.textContent = acc + '%';
+    }
+
+    init();
+</script>
+</body>
+</html>
